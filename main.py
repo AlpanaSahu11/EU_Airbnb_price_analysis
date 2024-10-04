@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
 import os
+import logging
 import mysql.connector
 from sqlalchemy import create_engine
 from mysql.connector import Error
@@ -12,8 +13,21 @@ from io import StringIO
 
 load_dotenv()
 
+logger = logging.getLogger()
+logging.basicConfig(filename="airbnb.log",format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',level=logging.DEBUG)
+
+logger.info("Program start")
+
 scope = ["https://spreadsheets.google.com/feeds",'https://www.googleapis.com/auth/drive']
+
+## Get environment variables
 cred_filename = os.getenv("CRED_FILENAME")
+folder_id = os.getenv("FOLDER_ID")  # Add the folder ID where the CSV files are stored
+# Connection parameters
+host = os.getenv("HOST")  # Change if you're connecting remotely
+user = os.getenv("USER")  # Your MySQL username
+password = os.getenv("PASSWORD")  # Your MySQL password
+database = os.getenv("DATABASE")  # The database name you want to create
 
 # Authenticate and create the PyDrive client
 def authenticate_gdrive(scope, cred_file):
@@ -21,13 +35,15 @@ def authenticate_gdrive(scope, cred_file):
     gauth = GoogleAuth()
     gauth.credentials = cred
     drive = GoogleDrive(gauth)
+    logger.info("Succesfully connected to Google Drive")
     return drive
 
 # Function to read CSV file content from Google Drive into a Pandas DataFrame
 def read_csv_from_drive(folder_id, drive):
     # List all files in the folder
     file_list = drive.ListFile({'q': f"'{folder_id}' in parents and trashed=false"}).GetList()
-    # print(file_list)
+    filenames = [file["title"] for file in file_list]
+    logger.info(f"Found the following files within the drive folder:\n{filenames}")
     
     final_df = pd.DataFrame()
     for file in file_list:
@@ -38,7 +54,7 @@ def read_csv_from_drive(folder_id, drive):
         df["City"] = file["title"].split("_")[0]
         df["day_flag"] = file["title"].split("_")[1].split(".")[0]
         
-        print(f"Successfully read the file {file["title"]}")
+        logger.info(f"Successfully read the file {file["title"]}")
         
         if final_df.empty:
             final_df = df
@@ -56,9 +72,9 @@ def create_connection(host_name, user_name, user_password):
             user=user_name,
             password=user_password
         )
-        print("Connection to MySQL DB successful")
+        logger.info("Connection to MySQL DB successful")
     except Error as e:
-        print(f"The error '{e}' occurred")
+        logger.error(f"The error '{e}' occurred")
     return connection
 
 def create_database(connection, db_name):
@@ -66,9 +82,9 @@ def create_database(connection, db_name):
     cursor = connection.cursor()
     try:
         cursor.execute(f"CREATE DATABASE IF NOT EXISTS {db_name}")
-        print(f"Database '{db_name}' created successfully")
+        logger.info(f"Database '{db_name}' created successfully")
     except Error as e:
-        print(f"The error '{e}' occurred")
+        logger.error(f"The error '{e}' occurred")
 
 def create_table(connection, db_name):
     """ Create a new table in the specified database """
@@ -98,14 +114,11 @@ def create_table(connection, db_name):
     """
     try:
         cursor.execute(create_table_query)
-        print("Table 'airbnb_eu' created successfully")
+        logger.info("Table created successfully")
     except Error as e:
-        print(f"The error '{e}' occurred")
+        logger.error(f"The error '{e}' occurred")
 
-
-# Main execution
-folder_id = os.getenv("FOLDER_ID")  # Add the folder ID where the CSV files are stored
-    
+## Driver Codes    
 # Authenticate and get the Google Drive client
 drive = authenticate_gdrive(scope, cred_filename)
 
@@ -114,13 +127,7 @@ output_df = read_csv_from_drive(folder_id, drive)
 output_df = output_df.drop(columns=["Unnamed: 0"], axis=1)
 
 # Print the first few rows of the DataFrame
-print(f"Final data: \n{output_df.head()}")
-
-# Connection parameters
-host = os.getenv("HOST")  # Change if you're connecting remotely
-user = os.getenv("USER")  # Your MySQL username
-password = os.getenv("PASSWORD")  # Your MySQL password
-database = os.getenv("DATABASE")  # The database name you want to create
+logger.info(f"Merged data from different cities: \n{output_df.head()}")
 
 # Create connection
 conn = create_connection(host, user, password)
@@ -142,8 +149,9 @@ try:
     # Insert DataFrame into MySQL table
     output_df.to_sql('airbnb_eu', con=engine, if_exists='replace', index=False)
 
-    print("Successfully wrote the data to SQL table")
+    logger.info("Successfully wrote the data to SQL table")
+    
 except Error as e:
-    print(f"Error while writing data to Sql\n{e}")
+    logger.error(f"Error while writing data to Sql\n{e}")
 
-print("End")
+logger.info("Program End")
