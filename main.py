@@ -11,6 +11,7 @@ from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive
 from io import StringIO
 
+# Load environment variables from .env file
 load_dotenv()
 
 logger = logging.getLogger()
@@ -49,18 +50,33 @@ def read_csv_from_drive(folder_id, drive):
     for file in file_list:
         # Get the file's download URL
         test_file = drive.CreateFile({'id': file['id']})
-        file_content = test_file.GetContentString()  # Get the file content as string, npt downloaded to local, rather stored as a local variable object
+        file_content = test_file.GetContentString()  # Get the file content as string, not downloaded to local, rather stored as a local variable object
         df = pd.read_csv(StringIO(file_content))  # Read the content into a Pandas DataFrame
         df["City"] = file["title"].split("_")[0]
         df["day_flag"] = file["title"].split("_")[1].split(".")[0]
         
         logger.info(f"Successfully read the file {file["title"]}")
         
+        # Apply data cleaning steps
+        columns_to_drop = ['Unnamed: 0', 'attr_index', 'attr_index_norm', 'rest_index_norm', 'rest_index']
+        df.drop(columns=[col for col in columns_to_drop if col in df.columns], inplace=True)
+
+        df.rename(columns={'realsum': 'Price', 'dist': 'city_cntr_dist', 'multi': 'multi_rooms', 'biz': 'business_purpose'}, inplace=True)
+
+        df.drop_duplicates(inplace=True)
+
+        if 'multi_rooms' in df.columns:
+            df['multi_rooms'] = df['multi_rooms'].astype(bool)
+        if 'business_purpose' in df.columns:
+            df['business_purpose'] = df['business_purpose'].astype(bool)
+
+        # Concatenate dataframes
         if final_df.empty:
             final_df = df
         else:
             final_df = pd.concat([final_df, df])
     
+    logging.info("All files processed successfully.")
     return final_df
 
 def create_connection(host_name, user_name, user_password):
@@ -93,18 +109,18 @@ def create_table(connection, db_name):
     create_table_query = """
     CREATE TABLE IF NOT EXISTS airbnb_eu (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        realsum DOUBLE,
+        Price DOUBLE,
         room_type VARCHAR(20),
         room_shared BOOLEAN,
         room_private BOOLEAN,
         person_capacity INTEGER,
         host_is_superhost BOOLEAN,
-        multi BOOLEAN,
-        biz BOOLEAN,
+        multi_rooms BOOLEAN,
+        business_purpose BOOLEAN,
         cleanliness_rating NUMERIC,
         guest_satisfaction_overall NUMERIC,
         bedrooms NUMERIC,
-        dist NUMERIC,
+        city_cntr_dist NUMERIC,
         metro_dist NUMERIC,
         lng NUMERIC,
         lat NUMERIC,
@@ -114,7 +130,7 @@ def create_table(connection, db_name):
     """
     try:
         cursor.execute(create_table_query)
-        logger.info("Table created successfully")
+        logger.info("Table 'airbnb_eu' created successfully")
     except Error as e:
         logger.error(f"The error '{e}' occurred")
 
@@ -123,8 +139,6 @@ def create_table(connection, db_name):
 drive = authenticate_gdrive(scope, cred_filename)
 
 output_df = read_csv_from_drive(folder_id, drive)
-
-output_df = output_df.drop(columns=["Unnamed: 0"], axis=1)
 
 # Print the first few rows of the DataFrame
 logger.info(f"Merged data from different cities: \n{output_df.head()}")
@@ -154,4 +168,4 @@ try:
 except Error as e:
     logger.error(f"Error while writing data to Sql\n{e}")
 
-logger.info("Program End")
+logger.info("End of script execution")
